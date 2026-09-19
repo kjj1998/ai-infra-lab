@@ -1,17 +1,25 @@
 [project]
 name = "ai-infra-lab"
 version = "0.1.0"
-description = "Add your description here"
+description = "Personal AI Infrastructure learning journey"
 readme = "README.md"
 authors = [
     { email = "koh.jun.jie@outlook.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
-
-[project.scripts]
-ai-infra-lab = "ai_infra_lab:main"
+dependencies = [
+    "fastapi[standard]>=0.141.1",
+    "torch>=2.14.0",
+    "transformers>=5.17.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "serving"
+namespace = true
+
+[tool.fastapi]
+entrypoint = "serving.classifier.main:app"

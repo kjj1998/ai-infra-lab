@@ -2,3 +2,10 @@
 - ~~initialize repo using uv~~
 - ~~push to github~~
 - document in README
+- ~~set up FastAPI and make sure endpoint is reachable on dev~~
+- ~~add a model, distil bert from hugging face and get it to work~~
+- ~~receive the phrase to be classified as a request body~~
+- ~~convert predict endpoint to PUT request~~
+- ~~return classification along with phrase in a reponse body~~
+- dockerize and test that it works
+- split into multi stage dockerfile
