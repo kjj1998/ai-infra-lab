@@ -1,0 +1,1 @@
+This is a learning project. Do not write implementation code unless explicitly asked. Prefer explaining, asking questions, and pointing to relevant source. When asked to review, say what's wrong and why, not the fix.

@@ -24,8 +24,6 @@ class Result(BaseModel):
 
 @app.put("/predict")
 def predict(prompt: Prompt) -> Result:
-    print(prompt)
-
     tokenizer = AutoTokenizer.from_pretrained(CHECKPOINT)
     model = AutoModelForSequenceClassification.from_pretrained(CHECKPOINT)
 
