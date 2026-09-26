@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -5,7 +7,23 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 CHECKPOINT = "distilbert-base-uncased-finetuned-sst-2-english"
 
-app = FastAPI()
+models = {"text-classification": {}}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load the ML model
+    models["text-classification"]["model"] = (
+        AutoModelForSequenceClassification.from_pretrained(CHECKPOINT)
+    )
+    models["text-classification"]["tokenizer"] = AutoTokenizer.from_pretrained(
+        CHECKPOINT
+    )
+    yield
+    models.clear()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/")
@@ -24,15 +42,14 @@ class Result(BaseModel):
 
 @app.put("/predict")
 def predict(prompt: Prompt) -> Result:
-    tokenizer = AutoTokenizer.from_pretrained(CHECKPOINT)
-    model = AutoModelForSequenceClassification.from_pretrained(CHECKPOINT)
-
+    model = models["text-classification"]["model"]
+    tokenizer = models["text-classification"]["tokenizer"]
     tokens = tokenizer(
         prompt.prompt, padding=True, truncation=True, return_tensors="pt"
     )
-    outputs = model(**tokens)
 
     with torch.no_grad():
+        outputs = model(**tokens)
         logits = outputs.logits
 
     predictions = logits.softmax(dim=-1)

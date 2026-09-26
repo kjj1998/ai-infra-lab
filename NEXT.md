@@ -10,7 +10,10 @@
 - ~~upgrade project to python 3.14 from 3.12~~
 - ~~dockerize and test that it works~~
 - ~~split into multi stage dockerfile~~
+- ~~load model on fastapi start~~
 - graceful shutdown of fastapi server
 - ~~add CLAUDE.md~~
 - add logging
 - ~~reorder repository layout to support future package~~
+- ~~measure cold start time~~
+- ~~add locust load testing that reports p50/p95/p99 latency at concurrency 1,8, 32~~

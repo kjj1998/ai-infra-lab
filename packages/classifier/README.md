@@ -21,3 +21,13 @@ View the logs from the running container
 ```
 docker logs -f classifier-serving
 ```
+
+## Load test
+Run load tests via Locust from the classifier package root
+```
+locust -f load-tests/locustfile.py -H http://localhost:8000 --headless -u <number of users> -r <number of users> -t 1m --csv load-tests/<number of users>_users/<number of users>_users
+```
+For example to run a load test with 8 concurrent users, use the following command
+```
+locust -f load-tests/locustfile.py -H http://localhost:8000 --headless -u 8 -r 8 -t 1m --csv load-tests/8_users/8_users
+```

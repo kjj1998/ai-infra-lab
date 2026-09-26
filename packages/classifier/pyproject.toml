@@ -19,3 +19,8 @@ build-backend = "uv_build"
 
 [tool.fastapi]
 entrypoint = "classifier.main:app"
+
+[dependency-groups]
+dev = [
+    "locust>=2.46.6",
+]
