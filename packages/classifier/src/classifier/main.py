@@ -19,6 +19,9 @@ async def lifespan(app: FastAPI):
     models["text-classification"]["tokenizer"] = AutoTokenizer.from_pretrained(
         CHECKPOINT
     )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    models["text-classification"]["model"].to(device)
+    models["text-classification"]["model"].eval()
     yield
     models.clear()
 
@@ -47,6 +50,7 @@ def predict(prompt: Prompt) -> Result:
     tokens = tokenizer(
         prompt.prompt, padding=True, truncation=True, return_tensors="pt"
     )
+    tokens = tokens.to(model.device)
 
     with torch.no_grad():
         outputs = model(**tokens)

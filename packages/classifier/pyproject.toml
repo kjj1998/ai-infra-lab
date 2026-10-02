@@ -23,4 +23,5 @@ entrypoint = "classifier.main:app"
 [dependency-groups]
 dev = [
     "locust>=2.46.6",
+    "py-spy>=0.4.2",
 ]

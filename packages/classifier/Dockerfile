@@ -28,4 +28,4 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app/packages/classifier
 
-CMD ["fastapi", "run", "--port", "8000"]
+CMD ["fastapi", "run", "--port", "8000", "--workers", "4"]
