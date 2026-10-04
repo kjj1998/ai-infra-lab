@@ -1,11 +1,11 @@
+import time
+
 import litserve as ls
 import torch
 from pydantic import BaseModel
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 CHECKPOINT = "distilbert-base-uncased-finetuned-sst-2-english"
-
-models = {"text-classification": {}}
 
 
 class Prompt(BaseModel):
@@ -25,16 +25,33 @@ class TextClassifierAPI(ls.LitAPI):
             .to(device)
         )
         self.tokenizer = AutoTokenizer.from_pretrained(CHECKPOINT)
+        self.total_requests = 0
+        self.total_batches = 0
+        self.time_of_last_report = time.monotonic()
 
     def decode_request(self, request: Prompt, context=None, **kwargs):
         if context is None:
             raise ValueError("context cannot be None")
-        tokens = self.tokenizer(
-            request.prompt, padding=True, truncation=True, return_tensors="pt"
-        )
-        tokens = tokens.to(self.device)
 
         context["prompt"] = request.prompt
+
+        return request.prompt
+
+    def batch(self, inputs):
+        self.total_requests += len(inputs)
+        self.total_batches += 1
+
+        if time.monotonic() - self.time_of_last_report >= 2.0:
+            avg_batch_size = self.total_requests // self.total_batches
+            print(f"Average batch size: {avg_batch_size}")
+
+            self.total_requests = 0
+            self.total_batches = 0
+
+        tokens = self.tokenizer(
+            inputs, padding=True, truncation=True, return_tensors="pt"
+        )
+        tokens = tokens.to(self.device)
 
         return tokens
 
@@ -45,9 +62,14 @@ class TextClassifierAPI(ls.LitAPI):
 
         predictions = logits.softmax(dim=-1)
         predicted_class_ids = predictions.argmax(dim=-1)
-        sentiment = self.model.config.id2label[predicted_class_ids[0].item()]
+        predicted_class_ids_list = predicted_class_ids.tolist()
 
-        return sentiment
+        sentiments = [
+            self.model.config.id2label[predicted_class_id]
+            for predicted_class_id in predicted_class_ids_list
+        ]
+
+        return sentiments
 
     def encode_response(self, output, context=None, **kwargs):
         if context is None:
@@ -56,6 +78,6 @@ class TextClassifierAPI(ls.LitAPI):
 
 
 if __name__ == "__main__":
-    api = TextClassifierAPI()
+    api = TextClassifierAPI(max_batch_size=8, batch_timeout=0.001)
     server = ls.LitServer(api, accelerator="cuda")
-    server.run(port=8000, generate_client_file=False)
+    server.run(port=8000, generate_client_file=False, num_api_servers=2)
