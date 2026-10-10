@@ -230,3 +230,152 @@ Costs of batching: waiting for a batch to fill (pure added latency at low load),
 Settings to tune: maximum batch size, maximum wait (timeout), and worker count. With per-worker batching each worker sees a fraction of the traffic, so once batching removes most of the launch overhead, fewer workers with fuller batches may beat more workers with small ones.
 
 Plan: measure the offline batch-cost curve (forward pass time for B = 1, 2, 4, …, 128, no HTTP) first, then adopt LitServe (check Python 3.14 support), and rerun the 1/8/32 user tests with and without batching, including the 1 user p50 to show batching's cost.
+
+### LitServe without batching (max batch size 1, 1 inference worker)
+
+Baseline before turning batching on, to measure LitServe's own overhead. Same Locust setup as before (GPU, 1 minute per level, no ramp up), except the endpoint is now `POST /predict` since LitServe only registers POST.
+
+How LitServe is structured (different from `fastapi run`):
+- **API server process(es)** run FastAPI/uvicorn, receive HTTP requests and put them on a queue.
+- **Inference worker(s)** (`workers_per_device` × devices) take requests off the queue, run `decode_request` → `predict` → `encode_response` one request at a time in a single loop, and send the result back through a response queue.
+- With `fastapi run --workers N`, each worker did both jobs in one process. With LitServe they are separate processes, each with its own GIL.
+
+| | 1 user | 8 users | 32 users |
+| :--- | :---: | :---: | :---: |
+| **Request Count** | 22657 | 35777 | 35916 |
+| **Requests/s** | 384~ | 606~ | 608~ |
+| **p50 latency** | 3 | 13 | 52 |
+| **p95 latency** | 3 | 14 | 55 |
+| **p99 latency** | 3 | 16 | 60 |
+| **Max latency** | 395 | 28 | 96 |
+| **Failures** | 0 | 0 | 0 |
+
+Requests/s is Locust's reported rate, which is slightly higher than request count ÷ 60.
+
+Little's law still holds, so from 8 users onwards latency is mostly queue time:
+```
+1 user:   1 / 384  = ~2.6 ms   (actual average 2.6 ms)
+8 users:  8 / 606  = ~13.2 ms  (actual average 13.2 ms)
+32 users: 32 / 608 = ~52.6 ms  (actual average 52.5 ms)
+```
+
+Compared with FastAPI on GPU with 1 worker:
+
+| Users | FastAPI req/s | LitServe req/s | FastAPI p50 / p99 | LitServe p50 / p99 |
+| :---: | :---: | :---: | :---: | :---: |
+| 1 | ~460 | ~384 (−17%) | 2 / 3 ms | 3 / 3 ms |
+| 8 | ~458 | ~606 (+32%) | 17 / 20 ms | 13 / 16 ms |
+| 32 | ~430 | ~608 (+41%) | 74 / 90 ms | 52 / 60 ms |
+
+**Why LitServe is slower at 1 user:** every request takes an extra hop between processes (API server → request queue → inference worker → response queue → API server). That costs roughly 0.4 ms per request, and at 1 user nothing overlaps with it, so it adds directly to every request.
+
+**Why LitServe is faster at 8 and 32 users, even without batching:**
+1. The work runs in parallel across processes. HTTP parsing, pydantic and JSON run in the API server process while the inference worker runs the model, each with its own GIL. With FastAPI they shared one GIL in one process. The py-spy profile put the event loop at ~9% of the time, so this accounts for part of the gain.
+2. No thread contention, probably the larger part. With FastAPI, throughput fell from 1 to 32 users (460 → 430) because up to 32 thread pool threads fought over one GIL. LitServe's inference worker processes requests one at a time in a single loop, and throughput is flat from 8 to 32 users (606 → 608).
+
+The new ceiling of ~607 req/s is the inference worker's own time per request (~1.65 ms), which per the py-spy profile is mostly forward pass launch overhead. The inference worker is now the bottleneck, which is the cost batching targets.
+
+Caveats:
+- Not a like-for-like comparison of resources: LitServe runs more processes than a single FastAPI worker. CPU per request (`docker stats`) was not recorded for these runs.
+- The best FastAPI result (4 workers, ~1118 req/s) is still well above LitServe with 1 inference worker.
+- The 395 ms max at 1 user is a one-off, probably the first request paying CUDA or library initialization. It does not affect p99, but warm up before measuring when comparing small differences.
+
+Prediction for batching (`max_batch_size=8`, 8 users): 8× throughput is an upper bound that will not be reached, because:
+- Only the forward pass is batched. HTTP parsing, the process hops, `decode_request`, `encode_response` and tokenization still run once per request (Amdahl's law).
+- A batch of 8 is not free (m > 0, plus batch tokenization and padding).
+- Batches will not always be full: in a closed loop the 8 requests return at slightly different times, so with a short `batch_timeout` the worker often starts a batch with fewer than 8.
+- Little's law: throughput = 8 ÷ latency, and latency cannot go below one round trip (HTTP hop + one batch).
+
+Rough estimate with assumed numbers: if a batch of 8 takes ~2 ms and the HTTP and process hops add ~1.5 ms, latency at 8 users is ~3.5 ms and throughput ≈ 8 ÷ 3.5 ms ≈ 2,300 req/s (~3.8×). Log the actual batch sizes `predict` receives, and check `docker stats` / `htop` to see whether the API server, the inference worker or Locust hits 100%.
+
+### LitServe with batching (max batch size 8, 1 inference worker)
+
+#### Code changes for batching
+- `decode_request` (per request): stores the prompt in `context` and returns the raw prompt text.
+- `batch` (per batch): tokenizes the whole list of prompts together with `padding=True` and moves the tensors to the device once.
+- `predict` (per batch): one forward pass, returns a **list** with one label per input, in input order.
+- `encode_response` (per request): builds `Result` from the label and the prompt in `context`.
+
+Gotchas found along the way:
+- `batch` is only called when `max_batch_size > 1`. Otherwise LitServe uses `SingleLoop`, which skips `batch` and passes the raw prompt string to `predict`. The warning about this only fires when both `batch` and `unbatch` are overridden.
+- If `predict` returns a single string in batched mode, the default `unbatch` (`list(output)`) splits it into characters, e.g. `"POSITIVE"` → `['P', 'O', ...]`, which fails the "Batch size mismatch" check (or silently passes when the batch size happens to equal the string length).
+- Calling `.item()` per row copies each value from the GPU separately and syncs each time. `.tolist()` copies the whole tensor in one transfer.
+- `max_batch_size` and `batch_timeout` belong on the `LitAPI` constructor. Passing them to `LitServer` still works in 0.2.19 but is deprecated.
+- `batch_timeout` is in **seconds**.
+- Average batch size was recorded with counters on the API object (requests and batches per worker), printed every few seconds and reset, instead of printing every batch in the hot loop.
+
+#### Results with `batch_timeout` = 1 ms
+
+| | 1 user | 8 users | 32 users |
+| :--- | :---: | :---: | :---: |
+| **Request Count** | 21114 | 71995 | 133136 |
+| **Requests/s** | 358~ | 1220~ | 2256~ |
+| **p50 latency** | 3 | 7 | 14 |
+| **p95 latency** | 3 | 8 | 16 |
+| **p99 latency** | 4 | 8 | 17 |
+| **Average latency** | 2.77 | 6.44 | 14.06 |
+| **Average batch size** | 1 | varied 1–8 | always 8 |
+| **Failures** | 0 | 0 | 0 |
+
+Compared with LitServe without batching:
+
+| Users | No batching req/s | Batch 8 req/s | Change | p50 / p99 (no batching → batch 8) |
+| :---: | :---: | :---: | :---: | :---: |
+| 1 | ~384 | ~358 | 0.93× | 3 / 3 → 3 / 4 ms |
+| 8 | ~606 | ~1220 | 2.0× | 13 / 16 → 7 / 8 ms |
+| 32 | ~608 | ~2256 | 3.7× | 52 / 60 → 14 / 17 ms |
+
+Little's law still holds: 8 / 1220 ≈ 6.6 ms (actual 6.4), 32 / 2256 ≈ 14.2 ms (actual 14.1). At 32 users this is about **twice the best FastAPI result** (4 workers, ~1118 req/s) with p99 17 ms instead of 46 ms, from a single inference worker.
+
+**32 users: estimate of F and m.** Batches were always full (average batch size exactly 8, which can only happen if no batch was smaller). Assuming the inference worker was busy 100% of the time (not yet verified with `htop`):
+```
+2256 req/s ÷ 8      ≈ 282 batches/s → ~3.55 ms per batch of 8
+no batching         ≈ ~1.65 ms per batch of 1
+
+F + m  ≈ 1.65 ms
+F + 8m ≈ 3.55 ms
+→ m ≈ 0.27 ms, F ≈ 1.4 ms
+```
+A batch of 8 costs only ~2.15× a batch of 1, and the fixed cost per call is about 5× the cost per extra input, which agrees with the py-spy profile. If the worker was ever idle, the real batch time is lower, so treat 3.55 ms as an upper bound.
+
+**8 users: why only 2×.** With 8 users and a max batch of 8 there is roughly one batch in flight at a time. The worker runs a batch (~3.5 ms), then sits idle while the responses travel back (response queue → API server → HTTP → Locust) and the next requests travel in. Latency of ~6.4 ms ≈ ~3.5 ms batch + ~3 ms round trip, so the worker is busy only about half the time. At 32 users other requests are already queued while one batch's round trip completes, so the worker stays busy (pipelining).
+
+**8 users: why batch size varied 1–8.** The 8 requests do not come back at the same moment, since each response passes through the queues, the API server, HTTP and Locust one after another. Whatever has arrived when the batch window closes becomes a batch. Once the users split into groups, the groups finish and return at different times and keep being batched separately, so the batch size wanders.
+
+**Prediction vs. actual.** I predicted ~2,300 req/s at 8 users. That was reached at 32 users, and 8 users got about half. The assumed numbers were off (a batch of 8 took ~3.5 ms, not ~2 ms, and the round trip was ~3 ms, not ~1.5 ms), and the estimate ignored the worker idling during the round trip of a single batch in flight.
+
+#### `batch_timeout` = 3 ms vs. 1 ms
+
+| | 1 ms timeout | 3 ms timeout |
+| :--- | :---: | :---: |
+| **1 user req/s** | ~358 | ~207 |
+| **1 user p50 / p99** | 3 / 4 ms | 5 / 5 ms |
+| **1 user average latency** | 2.77 ms | 4.81 ms |
+| **8 users req/s** | ~1220 | ~1179 |
+| **8 users p50 / p99** | 7 / 8 ms | 6 / 10 ms |
+| **8 users average batch size** | varied 1–8 | varied 4–8 |
+
+**8 users: fuller batches, same throughput.** The longer window collected more of the requests arriving at slightly different times, so batches rose from 1–8 to 4–8. Throughput did not improve (~3% lower, possibly noise with one run each). Fuller batches saved inference worker time, but the worker was not the bottleneck at 8 users since it was idle during each round trip. In a closed loop with 8 users, throughput = 8 ÷ latency, and the extra window wait roughly cancelled out the savings from paying F less often. At this concurrency, raising throughput means lowering per-cycle latency, and a longer timeout does the opposite.
+
+**1 user: how the timeout adds latency.** From LitServe's `collate_requests` (`litserve/loops/base.py`), the batch window starts when the worker begins collecting, not when a request arrives. With 1 user in a closed loop:
+1. The worker sends a response and immediately opens a new collection window.
+2. The response travels back to Locust, Locust sends the next request, and it travels back to the worker. Call that time **r**.
+3. The request arrives r into the window and waits for the rest of it: **timeout − r**.
+
+Both measurements fit with **r ≈ 0.8 ms** (time a request spends outside the inference worker):
+```
+1 ms − 0.8 ms ≈ 0.2 ms added   (measured: 2.77 − 2.58 ≈ +0.2 ms)
+3 ms − 0.8 ms ≈ 2.2 ms added   (measured: 4.81 − 2.58 ≈ +2.2 ms)
+```
+This is inferred from two consistent measurements, not measured directly.
+
+**Rule behind the results:** batching raises throughput only when there is a backlog. At 32 users there is always a queue (3.7×). At 8 users there is sometimes a queue (2×), and tuning the window cannot do much more. At 1 user there is never a queue, so batching only costs latency.
+
+**Decision:** 1 ms timeout. 3 ms is worse everywhere it differs: −46% throughput at 1 user versus no batching, and no gain at 8 users.
+
+Note: the 8 users CSV for the 1 ms run (`8_users_litserve_batch_8_stats.csv`) was overwritten by the 3 ms run. The 1 ms numbers above are from the run output recorded before it was overwritten. Use a filename that includes the timeout for future runs.
+
+#### Next
+- `htop` during a 32-user run: is the inference worker at 100%? If yes, the cap of 8 is now the limit, so try `max_batch_size=16`, with a prediction from F ≈ 1.4 ms, m ≈ 0.27 ms first. If the API server or Locust is at 100%, that is the new ceiling.
+- Optional: `batch_timeout=0` (LitServe takes whatever is already queued with no wait). Expected: same as no batching at 1 user, still full batches at 32 users, somewhat smaller batches at 8 users.
+- `workers_per_device=2` at 8 users, to see whether a second worker can run one batch while the other's round trip completes.

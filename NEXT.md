@@ -17,5 +17,8 @@
 - ~~reorder repository layout to support future package~~
 - ~~measure cold start time~~
 - ~~add locust load testing that reports p50/p95/p99 latency at concurrency 1,8, 32~~
-- enable GPU
-- load test and record p50/p95/p99 latencies when using GPU
+- ~~enable GPU~~
+- ~~load test and record p50/p95/p99 latencies when using GPU~~
+- rewrite on LitServe to support both batching and non-batching
+- Rerun the load tests starting from CPU after changing to
+- write Makefile commands for common commands

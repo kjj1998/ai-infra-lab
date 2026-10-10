@@ -4,7 +4,7 @@
 This section contains information about the text classifier part of the repository which I am using to learn AI Infrastructure.
 
 # Start Up
-Run `uv run python -m classifier.main`
+Run `make dev`. Make sure the environment variables are set in the .env file
 
 ## Docker
 Build the Docker image, from project root run
