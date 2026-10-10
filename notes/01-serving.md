@@ -30,19 +30,122 @@ Cold start time recorded only for multistage image, I do not expect much differe
 | Container Engine to App Ready: 8522 ms |
 | TOTAL COLD START LATENCY: 8581 ms |
 
-## Load test
+## Load tests
 
-### CPU
+### CPU (ACCELERATOR=cpu)
 
-Load tested the predict endpoint via `locust` at concurrency 1, 8 and 32 for 1 minute each. Each load test spawns the exact number of workers so there is no ramp up.
+Every run is 1 minute with the exact number of users spawned with no ramp up
 
-| | 1 worker| 8 workers | 32 workers |
-| :--- | :---: | :---: | :---: |
-| **Request Count** | 6152 | 8373 | 7823 |
-| **Requests/s** | 104~ | 141~ | 132~ |
-| **p50 latency** | 9 | 56 | 240 |
-| **p95 latency** | 10 | 64 | 270 |
-| **p99 latency** | 12 | 67 |  290 |
+| ID  | Batch        | Timeout | Workers | API | Threads | Users | Purpose                            |
+|-----|--------------|---------|---------|-----|---------|-------|------------------------------------|
+| C0a | 1            | 0       | 1       | 1   | default | 1     | Baseline vs FastAPI CPU            |
+| C0b | 1            | 0       | 1       | 1   | default | 8     |                                    |
+| C0c | 1            | 0       | 1       | 1   | default | 32    |                                    |
+| C1a | 8            | 0.001   | 1       | 1   | default | 32    | Batching sweep                     |
+| C1b | 8            | 0.005   | 1       | 1   | default | 32    |                                    |
+| C1c | 8            | 0.01    | 1       | 1   | default | 32    |                                    |
+| C1d | 16           | 0.001   | 1       | 1   | default | 32    |                                    |
+| C1e | 16           | 0.005   | 1       | 1   | default | 32    |                                    |
+| C1f | 16           | 0.01    | 1       | 1   | default | 32    |                                    |
+| C1g | 32           | 0.001   | 1       | 1   | default | 32    |                                    |
+| C1h | 32           | 0.005   | 1       | 1   | default | 32    |                                    |
+| C1i | 32           | 0.01    | 1       | 1   | default | 32    |                                    |
+| C2a | best C1      | best C1 | 2       | 1   | default | 32    | Workers + oversubscription         |
+| C2b | best C1      | best C1 | 2       | 1   | 6       | 32    |                                    |
+| C2c | best C1      | best C1 | 4       | 1   | default | 32    |                                    |
+| C2d | best C1      | best C1 | 4       | 1   | 6       | 32    |                                    |
+| C3a | best C2      | best C2 | best C2 | 2   | best C2 | 32    | Does HTTP matter on CPU?           |
+| C4a | best overall |         |         |     |         | 1     | Final table                        |
+| C4b | best overall |         |         |     |         | 8     |                                    |
+| C4c | best overall |         |         |     |         | 32    |                                    |
+
+#### Baseline (C0a - C0c)
+
+|                   | 1 worker | 8 workers | 32 workers |
+| :---------------- | :------: | :-------: | :--------: |
+| **Request Count** |   5609   |   6837    |    6846    |
+| **Requests/s**    |   95~    |   116~    |    116~    |
+| **p50 latency**   |    10    |    68     |    270     |
+| **p95 latency**   |    13    |    73     |    280     |
+| **p99 latency**   |    13    |    77     |    300     |
+
+
+#### With batching (C1a - C1i)
+
+Batch size 8 and 32 users
+
+| Batch Timeout (s) | 0.001 | 0.005 | 0.01  |
+| :---------------- | :---: | :---: | :---: |
+| **Request Count** | 24295 | 24304 | 24608 |
+| **Requests/s**    | 412~  | 412~  | 417~  |
+| **p50 latency**   |  77   |  77   |  76   |
+| **p95 latency**   |  86   |  86   |  85   |
+| **p99 latency**   |  91   |  91   |  90   |
+
+Batch size 16 and 32 users
+
+| Batch Timeout (s) | 0.001 | 0.005 | 0.01  |
+| :---------------- | :---: | :---: | :---: |
+| **Request Count** | 31255 | 32499 | 32757 |
+| **Requests/s**    | 529~  | 548~  | 554~  |
+| **p50 latency**   |  60   |  56   |  55   |
+| **p95 latency**   |  70   |  68   |  68   |
+| **p99 latency**   |  76   |  78   |  73   |
+
+Batch size 32 and 32 users
+
+| Batch Timeout (s) | 0.001 | 0.005 | 0.01  |
+| :---------------- | :---: | :---: | :---: |
+| **Request Count** | 32193 | 29578 | 31433 |
+| **Requests/s**    | 545~  | 500~  | 531~  |
+| **p50 latency**   |  57   |  70   |  57   |
+| **p95 latency**   |  69   |  86   |  95   |
+| **p99 latency**   |  74   |  93   |  110  |
+
+
+#### With batching, workers and threads (C2a - C2d)
+
+batch size 16, batch timeout 0.01s, 2 workers and 32 users
+
+| Threads           | 0 (default) |   6   |
+| :---------------- | :---------: | :---: |
+| **Request Count** |    32449    | 34386 |
+| **Requests/s**    |    548~     | 582~  |
+| **p50 latency**   |     56      |  53   |
+| **p95 latency**   |     84      |  62   |
+| **p99 latency**   |     95      |  93   |
+
+batch size 16, batch timeout 0.01s, 4 workers and 32 users
+
+| Threads           | 0 (default) |   6   |
+| :---------------- | :---------: | :---: |
+| **Request Count** |    2201     | 9157  |
+| **Requests/s**    |     37~     | 155~  |
+| **p50 latency**   |     840     |  190  |
+| **p95 latency**   |    1200     |  400  |
+| **p99 latency**   |    1400     |  520  |
+
+#### With 2 API servers
+
+|                   | 2 API Servers |
+| :---------------- | :-----------: |
+| **Request Count** |     33298     |
+| **Requests/s**    |     564~      |
+| **p50 latency**   |      55       |
+| **p95 latency**   |      65       |
+| **p99 latency**   |      95       |
+
+#### Best overall settings with different number of users
+
+Batch size 16, batch timeout 0.01s, 2 workers, 1 API server, 6 threads
+
+| Users             |   1   |   8   |  32   |
+| :---------------- | :---: | :---: | :---: |
+| **Request Count** | 3213  | 15859 | 33160 |
+| **Requests/s**    |  54~  | 269~  | 561~  |
+| **p50 latency**   |  19   |  30   |  51   |
+| **p95 latency**   |  21   |  34   |  71   |
+| **p99 latency**   |  22   |  37   |  95   |
 
 Since the load tests take place in a closed-loop where each user waits for a response before sending the next request, Little's law holds approximately:
 ```

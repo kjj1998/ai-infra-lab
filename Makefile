@@ -18,9 +18,9 @@ build:
 
 ## run: Run the Docker image for the classifier serving layer using CPU
 run:
-	docker run -d --name $(IMAGE_NAME) -p 8000:8000 $(IMAGE_NAME):latest
+	docker run --env-file .env -d --name $(IMAGE_NAME) -p 8000:8000 $(IMAGE_NAME):latest
 
 ## run-gpu: Run the Docker image for the classifier serving layer using GPU
 run-gpu:
-	docker run -d --gpus 'all' --name $(IMAGE_NAME) -p 8000:8000 $(IMAGE_NAME):latest
+	docker run --env-file -d --gpus 'all' --name $(IMAGE_NAME) -p 8000:8000 $(IMAGE_NAME):latest
 

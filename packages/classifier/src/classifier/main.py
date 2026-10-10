@@ -25,7 +25,13 @@ class Result(BaseModel):
 
 
 class TextClassifierAPI(ls.LitAPI):
+    def __init__(self, torch_num_threads: int = 0, **kwargs):
+        super().__init__(**kwargs)
+        self.torch_num_threads = torch_num_threads
+
     def setup(self, device):
+        if self.torch_num_threads > 0:
+            torch.set_num_threads(self.torch_num_threads)
         self.model = (
             AutoModelForSequenceClassification.from_pretrained(CHECKPOINT)
             .eval()
@@ -106,6 +112,7 @@ class Config:
     accelerator: Accelerator
     num_api_servers: int
     workers_per_device: int
+    torch_num_threads: int
 
 
 def read_int(name: str, default: str, min_value: int) -> int:
@@ -148,6 +155,7 @@ def load_config() -> Config:
     max_batch_size = read_int("MAX_BATCH_SIZE", "1", 1)
     num_api_servers = read_int("NUM_API_SERVERS", "1", 1)
     workers_per_device = read_int("WORKERS_PER_DEVICE", "1", 1)
+    torch_num_threads = read_int("TORCH_NUM_THREADS", "0", 0)
     batch_timeout = read_float("BATCH_TIMEOUT", "0.0", 0.0)
     accelerator = read_choice("ACCELERATOR", "cpu", ACCELERATORS)
 
@@ -157,6 +165,7 @@ def load_config() -> Config:
         workers_per_device=workers_per_device,
         batch_timeout=batch_timeout,
         accelerator=cast(Accelerator, accelerator),
+        torch_num_threads=torch_num_threads,
     )
 
 
@@ -166,8 +175,12 @@ if __name__ == "__main__":
     except ConfigError as e:
         sys.exit(str(e))
 
+    print(config)
+
     api = TextClassifierAPI(
-        max_batch_size=config.max_batch_size, batch_timeout=config.batch_timeout
+        max_batch_size=config.max_batch_size,
+        batch_timeout=config.batch_timeout,
+        torch_num_threads=config.torch_num_threads,
     )
     server = ls.LitServer(
         api,
