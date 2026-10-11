@@ -1,7 +1,7 @@
-from locust import HttpUser, task
+from locust import FastHttpUser, task
 
 
-class Predict(HttpUser):
+class Predict(FastHttpUser):
     @task
     def predict(self):
         self.client.post(

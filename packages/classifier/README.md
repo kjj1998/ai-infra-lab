@@ -14,7 +14,7 @@ docker build -t classifier-serving -f packages/classifier/Dockerfile .
 
 Run the image in detached mode
 ```
-docker run -d --name classifier-serving -p 8000:8000 classifier-serving:latest
+docker run --env-file .env -d --name classifier-serving -p 8000:8000 classifier-serving:latest
 ```
 
 View the logs from the running container
@@ -24,17 +24,17 @@ docker logs -f classifier-serving
 
 Run the image with GPUs enabled (must install Nvidia Container Runtime Kit, see section below)
 ```
-docker run -d --gpus 'all' --name classifier-serving -p 8000:8000 classifier-serving:latest
+docker run --env-file .env -d --gpus 'all' --name classifier-serving -p 8000:8000 classifier-serving:latest
 ```
 
 ## Load test
 Run load tests via Locust from the classifier package root
 ```
-locust -f load-tests/locustfile.py -H http://localhost:8000 --headless -u <number of users> -r <number of users> -t 1m --csv load-tests/<number of users>_users/<number of users>_users
+locust -f load-tests/locustfile.py -H http://localhost:8000 --headless -u <number of users> -r <number of users> -t 1m --csv load-tests/<cpu or gpu>/<test identifier>/
 ```
-For example to run a load test with 8 concurrent users, use the following command
+For example to run a load test with 8 concurrent users on gpu, use the following command
 ```
-locust -f load-tests/locustfile.py -H http://localhost:8000 --headless -u 8 -r 8 -t 1m --csv load-tests/8_users/8_users
+locust -f load-tests/locustfile.py -H http://localhost:8000 --headless -u 8 -r 8 -t 1m --csv load-tests/gpu/8_users/
 ```
 
 ## Setting up Nvidia Container Runtime Kit

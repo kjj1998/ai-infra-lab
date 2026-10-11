@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+POST,/predict,"ConnectionResetError(104, 'Connection reset by peer')",1,2026-10-11T05:48:06Z,2026-10-11T05:48:06Z
+POST,/predict,RemoteDisconnected('Remote end closed connection without response'),5597,2026-10-11T05:48:06Z,2026-10-11T05:48:07Z

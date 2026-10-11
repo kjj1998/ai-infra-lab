@@ -1,0 +1,3 @@
+Type, Name      , Request Count, Failure Count, Median Response Time, Average Response Time, Min Response Time , Max Response Time, Average Content Size, Requests/s        , Failures/s, 50%, 66%, 75%, 80%, 90%, 95%, 98%, 99%, 99.9%, 99.99%, 100%
+POST, /predict  ,        173495,             0,                   22,    21.742968611464057, 13.490445000570617, 44.51530199912668,                 79.0, 2939.5688896482593,        0.0,  22,  23,  23,  23,  24,  25,  26,  26,    29,     37,   45
+    , Aggregated,        173495,             0,                   22,    21.742968611464057, 13.490445000570617, 44.51530199912668,                 79.0, 2939.5688896482593,        0.0,  22,  23,  23,  23,  24,  25,  26,  26,    29,     37,   45
