@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import sys
@@ -13,6 +14,33 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 CHECKPOINT = "distilbert-base-uncased-finetuned-sst-2-english"
 Accelerator = Literal["cpu", "cuda", "mps", "auto"]
 ACCELERATORS: tuple[str, ...] = get_args(Accelerator)
+LOGGER_NAME = os.environ.get("LOGGER_NAME", "classifier")
+LOG_FORMAT = "[%(levelname)s] %(asctime)s %(processName)s %(name)s %(message)s"
+
+
+def read_log_level() -> str:
+    level = os.environ.get("LOG_LEVEL", "DEBUG").upper()
+    if level not in logging.getLevelNamesMapping():
+        raise ValueError(f"LOG_LEVEL must be a valid logging level, got {level!r}")
+    return level
+
+
+def configure_logging(level: str) -> logging.Logger:
+    logger = logging.getLogger(LOGGER_NAME)
+
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        logger.addHandler(handler)
+
+    logger.setLevel(level)
+
+    logger.propagate = False
+    return logger
+
+
+LOG_LEVEL = read_log_level()
+logger = configure_logging(LOG_LEVEL)
 
 
 class Prompt(BaseModel):
@@ -32,15 +60,27 @@ class TextClassifierAPI(ls.LitAPI):
     def setup(self, device):
         if self.torch_num_threads > 0:
             torch.set_num_threads(self.torch_num_threads)
+
+        start_time = time.perf_counter()
         self.model = (
             AutoModelForSequenceClassification.from_pretrained(CHECKPOINT)
             .eval()
             .to(device)
         )
+        end_time = time.perf_counter()
+        model_load_elapsed_time = end_time - start_time
+
         self.tokenizer = AutoTokenizer.from_pretrained(CHECKPOINT)
         self.total_requests = 0
         self.total_batches = 0
         self.time_of_last_report = time.monotonic()
+
+        logger.info(
+            "device: %s, pytorch threads: %d, model load time: %.6f seconds",
+            device,
+            torch.get_num_threads(),
+            model_load_elapsed_time,
+        )
 
     def decode_request(self, request: Prompt, context=None, **kwargs):
         if context is None:
@@ -54,23 +94,41 @@ class TextClassifierAPI(ls.LitAPI):
         self.total_requests += len(inputs)
         self.total_batches += 1
 
-        if time.monotonic() - self.time_of_last_report >= 2.0:
-            avg_batch_size = (
-                self.total_requests // self.total_batches
-            )  # intentional truncate
-            print(f"Average batch size: {avg_batch_size}")
+        now = time.monotonic()
+        elapsed = now - self.time_of_last_report
+
+        if elapsed >= 2.0:
+            logger.info(
+                "batch stats: requests=%d batches=%d avg_batch_size=%.2f "
+                "max_batch_size=%d window=%.2fs",
+                self.total_requests,
+                self.total_batches,
+                self.total_requests / self.total_batches,
+                self.max_batch_size,
+                elapsed,
+            )
 
             self.total_requests = 0
             self.total_batches = 0
-            self.time_of_last_report = time.monotonic()
+            self.time_of_last_report = now
 
         return inputs
 
     def predict(self, x, **kwargs):
-        if self.check_single_mode():
-            return self.classify_batch([x])[0]
-        else:
-            return self.classify_batch(x)
+        logger.debug("predicting")
+        inputs = [x] if self.check_single_mode() else x
+
+        try:
+            results = self.classify_batch(inputs)
+        except Exception:
+            logger.exception(
+                "classify_batch failed: batch_size=%d device=%s",
+                len(inputs),
+                self.device,
+            )
+            raise
+
+        return results[0] if self.check_single_mode() else results
 
     def encode_response(self, output, context=None, **kwargs):
         if context is None:
@@ -176,6 +234,7 @@ if __name__ == "__main__":
         sys.exit(str(e))
 
     print(config)
+    logger.info("Config: %s", config)
 
     api = TextClassifierAPI(
         max_batch_size=config.max_batch_size,
@@ -188,5 +247,8 @@ if __name__ == "__main__":
         workers_per_device=config.workers_per_device,
     )
     server.run(
-        port=8000, generate_client_file=False, num_api_servers=config.num_api_servers
+        port=8000,
+        generate_client_file=False,
+        num_api_servers=config.num_api_servers,
+        log_level=LOG_LEVEL.lower(),
     )
