@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Literal, cast, get_args
 
-import litserve as ls
+import litserve as ls  # type: ignore
 import torch
 from pydantic import BaseModel
 from transformers import AutoModelForSequenceClassification, AutoTokenizer

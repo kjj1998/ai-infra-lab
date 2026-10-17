@@ -21,4 +21,5 @@ build-backend = "uv_build"
 dev = [
     "locust>=2.46.6",
     "py-spy>=0.4.2",
+    "pytest>=9.1.1",
 ]

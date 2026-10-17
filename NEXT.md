@@ -22,3 +22,4 @@
 - ~~rewrite on LitServe to support both batching and non-batching~~
 - ~~Rerun the load tests starting from CPU after changing to~~
 - ~~write Makefile commands for common commands~~
+- set up Github Actions, lint, tests, image build and push

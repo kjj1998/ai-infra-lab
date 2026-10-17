@@ -12,6 +12,10 @@ all: build
 dev: 
 	uv run --env-file .env python -m classifier.main 
 
+# Run classifier tests
+test-classifier:
+	uv run pytest packages/classifier/tests/unit/* -v
+
 ## build: Build the Docker image for the classifier serving layer
 build:
 	docker build -t $(IMAGE_NAME) -f $(DOCKERFILE_PATH) $(CONTEXT_DIR)
